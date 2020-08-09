@@ -1,48 +1,41 @@
 ﻿using System.Linq;
 using GraphQL.EntityFramework;
+using Microsoft.EntityFrameworkCore;
 
 class ConnectionRootQuery
 {
     #region ConnectionRootQuery
 
     public class Query :
-        EfObjectGraphType
+        QueryGraphType<MyDbContext>
     {
-        public Query(IEfGraphQLService graphQlService) :
+        public Query(IEfGraphQLService<MyDbContext> graphQlService) :
             base(graphQlService)
         {
-            AddQueryConnectionField<CompanyGraph, Company>(
+            AddQueryConnectionField(
                 name: "companies",
-                resolve: context =>
-                {
-                    var dataContext = (MyDataContext) context.UserContext;
-                    return dataContext.Companies;
-                });
+                resolve: context => context.DbContext.Companies);
         }
     }
 
     #endregion
 
-    class DataContext
-    {
-        public IQueryable<Company> Companies { get; set; }
-    }
-
-    class Company
+    public class Company
     {
     }
 
     class CompanyGraph :
-        EfObjectGraphType<Company>
+        EfObjectGraphType<MyDbContext, Company>
     {
-        public CompanyGraph(IEfGraphQLService efGraphQlService) :
+        public CompanyGraph(IEfGraphQLService<MyDbContext> efGraphQlService) :
             base(efGraphQlService)
         {
         }
     }
 
-    class MyDataContext
+    public class MyDbContext :
+        DbContext
     {
-        public IQueryable<Company> Companies { get; set; }
+        public IQueryable<Company> Companies { get; set; } = null!;
     }
 }

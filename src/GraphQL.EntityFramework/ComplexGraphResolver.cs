@@ -1,26 +1,33 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using GraphQL.Types;
+using GraphQL.Types.Relay;
 
 static class ComplexGraphResolver
 {
     class Resolved
     {
-        public IComplexGraphType ComplexGraphType;
-        public Type EntityType;
+        public Resolved(Type? entityType, IComplexGraphType? graph)
+        {
+            EntityType = entityType;
+            Graph = graph;
+        }
+        public readonly IComplexGraphType? Graph;
+        public readonly Type? EntityType;
     }
 
     static ConcurrentDictionary<IGraphType, Resolved> cache = new ConcurrentDictionary<IGraphType, Resolved>();
 
-    public static bool TryGetComplexGraph(this FieldType fieldType, out IComplexGraphType complexGraph)
+    public static bool TryGetComplexGraph(this FieldType fieldType, [NotNullWhen(true)] out IComplexGraphType? graph)
     {
         var orAdd = GetOrAdd(fieldType);
-        complexGraph = orAdd.ComplexGraphType;
-        return complexGraph != null;
+        graph = orAdd.Graph;
+        return graph != null;
     }
 
-    public static bool TryGetEntityTypeForField(this FieldType fieldType, out Type entityType)
+    public static bool TryGetEntityTypeForField(this FieldType fieldType, [NotNullWhen(true)] out Type? entityType)
     {
         var orAdd = GetOrAdd(fieldType);
         entityType = orAdd.EntityType;
@@ -29,37 +36,76 @@ static class ComplexGraphResolver
 
     static Resolved GetOrAdd(FieldType fieldType)
     {
-        var orAdd = cache.GetOrAdd(fieldType.ResolvedType, graphType =>
-        {
-            var resolved = new Resolved();
-            if (graphType is ListGraphType listGraphType)
+        return cache.GetOrAdd(
+            fieldType.ResolvedType,
+            graphType =>
             {
-                graphType = listGraphType.ResolvedType;
-            }
+                if (graphType is ListGraphType listGraphType)
+                {
+                    graphType = listGraphType.ResolvedType;
+                }
 
-            if (graphType is IComplexGraphType complexType)
-            {
-                resolved.ComplexGraphType = complexType;
-            }
+                if (graphType is UnionGraphType unionGraphType)
+                {
+                    graphType = unionGraphType.PossibleTypes.First();
+                }
 
-            resolved.EntityType = ResolvedEntityType(graphType);
-            return resolved;
-        });
-        return orAdd;
+                if (graphType is NonNullGraphType nonNullGraphType)
+                {
+                    graphType = nonNullGraphType.ResolvedType;
+                    if (graphType is ListGraphType innerListGraphType)
+                    {
+                        graphType = innerListGraphType.ResolvedType;
+                        if (graphType is NonNullGraphType innerNonNullGraphType)
+                        {
+                            graphType = innerNonNullGraphType.ResolvedType;
+                        }
+
+                        if (graphType is UnionGraphType innerUnionGraphType)
+                        {
+                            graphType = innerUnionGraphType.PossibleTypes.First();
+                        }
+                    }
+                }
+
+                IComplexGraphType? graph = null;
+                if (graphType is IComplexGraphType complexType)
+                {
+                    graph = complexType;
+                }
+
+                return new Resolved(ResolvedEntityType(graphType), graph);
+            });
     }
 
-    static Type ResolvedEntityType(IGraphType graphType)
+    static Type? ResolvedEntityType(IGraphType graph)
     {
-        var type = graphType.GetType();
+        var type = graph.GetType();
 
-        while (type.BaseType != null)
+        while (type != null)
         {
-            type = type.BaseType;
-            if (type.IsGenericType &&
-                type.GetGenericTypeDefinition() == typeof(ComplexGraphType<>))
+            if (type.IsGenericType)
             {
-                return type.GetGenericArguments().Single();
+                var genericTypeDefinition = type.GetGenericTypeDefinition();
+                var genericArguments = type.GetGenericArguments();
+                if (genericTypeDefinition == typeof(ComplexGraphType<>))
+                {
+                    return genericArguments.Single();
+                }
+                if (genericTypeDefinition == typeof(ConnectionType<>))
+                {
+                    var resolvedEntityType = genericArguments.Single();
+                    type = resolvedEntityType.BaseType;
+                    continue;
+                }
+                if (genericTypeDefinition == typeof(ConnectionType<,>))
+                {
+                    var resolvedEntityType = genericArguments.First();
+                    type = resolvedEntityType.BaseType;
+                    continue;
+                }
             }
+            type = type.BaseType;
         }
 
         return null;

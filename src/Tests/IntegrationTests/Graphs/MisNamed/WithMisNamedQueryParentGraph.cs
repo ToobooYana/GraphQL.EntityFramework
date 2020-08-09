@@ -2,19 +2,19 @@
 using GraphQL.EntityFramework;
 
 public class WithMisNamedQueryParentGraph :
-    EfObjectGraphType<WithMisNamedQueryParentEntity>
+    EfObjectGraphType<IntegrationDbContext, WithMisNamedQueryParentEntity>
 {
-    public WithMisNamedQueryParentGraph(IEfGraphQLService graphQlService) :
+    public WithMisNamedQueryParentGraph(IEfGraphQLService<IntegrationDbContext> graphQlService) :
         base(graphQlService)
     {
-        Field(x => x.Id);
-        AddQueryField<WithMisNamedQueryChildGraph, WithMisNamedQueryChildEntity>(
+        AddQueryField(
             name: "misNamedChildren",
             resolve: context =>
             {
-                var dataContext = (MyDataContext)context.UserContext;
                 var parentId = context.Source.Id;
-                return dataContext.WithMisNamedQueryChildEntities.Where(x=>x.ParentId == parentId);
+                return context.DbContext.WithMisNamedQueryChildEntities
+                    .Where(x => x.ParentId == parentId);
             });
+        AutoMap();
     }
 }

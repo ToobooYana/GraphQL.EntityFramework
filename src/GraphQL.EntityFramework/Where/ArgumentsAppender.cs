@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using GraphQL.EntityFramework;
 using GraphQL.Types;
 
 static class ArgumentAppender
@@ -19,17 +20,17 @@ static class ArgumentAppender
         };
     }
 
-    static QueryArgument<ListGraphType<StringGraphType>> idsArgument()
+    static QueryArgument<ListGraphType<IdGraphType>> idsArgument()
     {
-        return new QueryArgument<ListGraphType<StringGraphType>>
+        return new QueryArgument<ListGraphType<IdGraphType>>
         {
             Name = "ids"
         };
     }
 
-    static QueryArgument<StringGraphType> idArgument()
+    static QueryArgument<IdGraphType> idArgument()
     {
-        return new QueryArgument<StringGraphType>
+        return new QueryArgument<IdGraphType>
         {
             Name = "id"
         };
@@ -51,7 +52,7 @@ static class ArgumentAppender
         };
     }
 
-    public static void AddWhereArgument(this FieldType field, IEnumerable<QueryArgument> extra)
+    public static void AddWhereArgument(this FieldType field, IEnumerable<QueryArgument>? extra)
     {
         var arguments = field.Arguments;
         arguments.Add(whereArgument());
@@ -66,7 +67,7 @@ static class ArgumentAppender
         }
     }
 
-    public static QueryArguments GetQueryArguments(IEnumerable<QueryArgument> extra)
+    public static QueryArguments GetQueryArguments(IEnumerable<QueryArgument>? extra)
     {
         var arguments = new QueryArguments
         {

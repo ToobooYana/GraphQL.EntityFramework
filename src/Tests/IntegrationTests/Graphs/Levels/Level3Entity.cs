@@ -2,6 +2,6 @@
 
 public class Level3Entity
 {
-    public Guid Id { get; set; }
-    public string Property { get; set; }
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string? Property { get; set; }
 }

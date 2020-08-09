@@ -1,19 +1,18 @@
 ﻿using GraphQL.EntityFramework;
 
 public class CompanyGraph :
-    EfObjectGraphType<Company>
+    EfObjectGraphType<SampleDbContext, Company>
 {
-    public CompanyGraph(IEfGraphQLService graphQlService) :
+    public CompanyGraph(IEfGraphQLService<SampleDbContext> graphQlService) :
         base(graphQlService)
     {
-        Field(x => x.Id);
-        Field(x => x.Content);
-        AddNavigationField<EmployeeGraph, Employee>(
+        AddNavigationListField(
             name: "employees",
             resolve: context => context.Source.Employees);
-        AddNavigationConnectionField<EmployeeGraph, Employee>(
+        AddNavigationConnectionField(
             name: "employeesConnection",
             resolve: context => context.Source.Employees,
             includeNames: new[] {"Employees"});
+        AutoMap();
     }
 }

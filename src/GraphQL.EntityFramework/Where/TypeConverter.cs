@@ -6,7 +6,7 @@ using GraphQL;
 
 static class TypeConverter
 {
-    public static IList ConvertStringsToList(string[] values, Type type)
+    public static IList ConvertStringsToList(string?[] values, Type type)
     {
         if (values.Length != values.Distinct().Count())
         {
@@ -20,12 +20,22 @@ static class TypeConverter
             throw new Exception($"Null passed to In expression for non nullable type '{type.FullName}'.");
         }
 
-        var list = ConvertStringsToListInternal(values.Where(x => x != null), type);
+        var list = ConvertStringsToListInternal(values.Where(x => x != null).Select(x=>x!), type);
         if (hasNull)
         {
             list.Add(null);
         }
         return list;
+    }
+
+    static bool ParseBoolean(string value)
+    {
+        switch (value)
+        {
+            case "1": return true;
+            case "0": return false;
+            default: return bool.Parse(value);
+        }
     }
 
     static IList ConvertStringsToListInternal(IEnumerable<string> values, Type type)
@@ -37,6 +47,15 @@ static class TypeConverter
         if (type == typeof(Guid?))
         {
             return values.Select(s => new Guid?(Guid.Parse(s))).ToList();
+        }
+
+        if (type == typeof(bool))
+        {
+            return values.Select(ParseBoolean).ToList();
+        }
+        if (type == typeof(bool?))
+        {
+            return values.Select(s => new bool?(ParseBoolean(s))).ToList();
         }
 
         if (type == typeof(int))
@@ -111,10 +130,16 @@ static class TypeConverter
             return values.Select(s => new DateTimeOffset?(DateTimeOffset.Parse(s))).ToList();
         }
 
-        throw new Exception($"Could not convert strings to {type.FullName} ");
+        if (type.TryGetEnumType(out var enumType))
+        {
+            return values.Select(s => Enum.Parse(enumType, s, true))
+                .ToList();
+        }
+
+        throw new Exception($"Could not convert strings to {type.FullName}.");
     }
 
-    public static object ConvertStringToType(string value, Type type)
+    public static object? ConvertStringToType(string? value, Type type)
     {
         var underlyingType = Nullable.GetUnderlyingType(type);
         if (underlyingType != null)
@@ -140,6 +165,11 @@ static class TypeConverter
         if (type == typeof(Guid))
         {
             return Guid.Parse(value);
+        }
+
+        if (type.IsEnum)
+        {
+            return Enum.Parse(type, value, true);
         }
 
         return Convert.ChangeType(value, type);

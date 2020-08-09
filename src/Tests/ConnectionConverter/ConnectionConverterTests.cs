@@ -1,17 +1,36 @@
-﻿using System.Collections.Generic;
-using System.Threading;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
-using ApprovalTests.Namers;
-using GraphQL.Types;
-using ObjectApproval;
+using EfLocalDb;
+using GraphQL;
+using Microsoft.EntityFrameworkCore;
+using VerifyTests;
+using VerifyXunit;
 using Xunit;
+using Filters = GraphQL.EntityFramework.Filters;
 
+[UsesVerify]
 public class ConnectionConverterTests
 {
-    List<string> list = new List<string>
+    static ConnectionConverterTests()
+    {
+        sqlInstance = new SqlInstance<MyContext>(
+            buildTemplate: async dbContext =>
+            {
+                await dbContext.Database.EnsureCreatedAsync();
+                dbContext.AddRange(list.Select(x => new Entity {Property = x}));
+                await dbContext.SaveChangesAsync();
+            },
+            constructInstance: builder => new MyContext(builder.Options));
+    }
+
+    static List<string> list = new List<string>
     {
         "a", "b", "c", "d", "e", "f", "g", "h", "i", "j"
     };
+
+    static SqlInstance<MyContext> sqlInstance;
 
     [Theory]
     //first after
@@ -36,13 +55,15 @@ public class ConnectionConverterTests
 
     //last after
     [InlineData(null, 7, 2, null)]
-
     public async Task Queryable(int? first, int? after, int? last, int? before)
     {
-        NamerFactory.AdditionalInformation = $"first_{first}_after_{after}_last_{last}_before_{before}";
-        var queryable = new AsyncEnumerable<string>(list);
-        var connection = await ConnectionConverter.ApplyConnectionContext(queryable, first, after, last, before, new ResolveFieldContext<string>() , CancellationToken.None);
-        ObjectApprover.VerifyWithJson(connection);
+        var fieldContext = new ResolveFieldContext<string>();
+        await using var database = await sqlInstance.Build(databaseSuffix: $"{first.GetValueOrDefault(0)}{after.GetValueOrDefault(0)}{last.GetValueOrDefault(0)}{before.GetValueOrDefault(0)}");
+        var entities = database.Context.Entities;
+        var connection = await ConnectionConverter.ApplyConnectionContext(entities.OrderBy(x=>x.Property), first, after, last, before, fieldContext, new Filters());
+        var settings = new VerifySettings();
+        settings.UseParameters(first, after, last, before);
+        await Verifier.Verify(connection.Items.OrderBy(x=>x.Property), settings);
     }
 
     [Theory]
@@ -69,10 +90,34 @@ public class ConnectionConverterTests
     //last after
     [InlineData(null, 7, 2, null)]
 
-    public void List(int? first, int? after, int? last, int? before)
+    public Task List(int? first, int? after, int? last, int? before)
     {
-        NamerFactory.AdditionalInformation = $"first_{first}_after_{after}_last_{last}_before_{before}";
+
         var connection = ConnectionConverter.ApplyConnectionContext(list, first, after, last, before);
-        ObjectApprover.VerifyWithJson(connection);
+        var settings = new VerifySettings();
+        settings.UseParameters(first, after, last, before);
+        return Verifier.Verify(connection,settings);
+    }
+
+    public class Entity
+    {
+        public Guid Id { get; set; } = Guid.NewGuid();
+        public string? Property { get; set; }
+    }
+
+    public class MyContext :
+        DbContext
+    {
+        public DbSet<Entity> Entities { get; set; } = null!;
+
+        public MyContext(DbContextOptions options) :
+            base(options)
+        {
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<Entity>();
+        }
     }
 }

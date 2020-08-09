@@ -1,11 +1,14 @@
-﻿using GraphQL;
+﻿using System;
 
 public class Schema :
     GraphQL.Types.Schema
 {
-    public Schema(IDependencyResolver resolver) :
+    public Schema(IServiceProvider resolver) :
         base(resolver)
     {
-        Query = resolver.Resolve<Query>();
+        Query = (Query)resolver.GetService(typeof(Query));
+        Mutation = (Mutation)resolver.GetService(typeof(Mutation));
+        RegisterType<DerivedGraph>();
+        RegisterType<DerivedWithNavigationGraph>();
     }
 }

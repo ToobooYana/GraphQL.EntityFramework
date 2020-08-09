@@ -1,0 +1,138 @@
+scalar BigInt
+
+scalar Byte
+
+type CompanyGraph {
+  employees(id: ID, ids: [ID], orderBy: [OrderByGraph], where: [WhereExpressionGraph], skip: Int, take: Int): [EmployeeGraph!]!
+  employeesConnection(after: String, first: Int, where: [WhereExpressionGraph], orderBy: [OrderByGraph], ids: [ID]): EmployeeGraphConnection
+  content: String
+  id: Int!
+}
+
+type CompanyGraphConnection {
+  totalCount: Int
+  pageInfo: PageInfo!
+  edges: [CompanyGraphEdge]
+  items: [CompanyGraph]
+}
+
+type CompanyGraphEdge {
+  cursor: String!
+  node: CompanyGraph
+}
+
+enum ComparisonGraph {
+  contains
+  endsWith
+  equal
+  greaterThan
+  greaterThanOrEqual
+  notIn
+  in
+  lessThan
+  lessThanOrEqual
+  like
+  startsWith
+}
+
+enum Connector {
+  AND
+  OR
+  and
+  or
+}
+
+scalar Date
+
+scalar DateTime
+
+scalar DateTimeOffset
+
+scalar Decimal
+
+type EmployeeGraph {
+  company: CompanyGraph!
+  age: Int!
+  companyId: Int!
+  content: String
+  id: Int!
+}
+
+type EmployeeGraphConnection {
+  totalCount: Int
+  pageInfo: PageInfo!
+  edges: [EmployeeGraphEdge]
+  items: [EmployeeGraph]
+}
+
+type EmployeeGraphEdge {
+  cursor: String!
+  node: EmployeeGraph
+}
+
+type EmployeeSummaryGraph {
+  averageAge: Float!
+  companyId: Int!
+}
+
+scalar Guid
+
+scalar Long
+
+scalar Milliseconds
+
+input OrderByGraph {
+  path: String!
+  descending: Boolean
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+type Query {
+  companies(id: ID, ids: [ID], orderBy: [OrderByGraph], where: [WhereExpressionGraph], skip: Int, take: Int): [CompanyGraph!]!
+  company(id: ID, ids: [ID], orderBy: [OrderByGraph], where: [WhereExpressionGraph], skip: Int, take: Int): CompanyGraph!
+  companyOrNull(id: ID, ids: [ID], orderBy: [OrderByGraph], where: [WhereExpressionGraph], skip: Int, take: Int): CompanyGraph
+  companiesConnection(after: String, first: Int, where: [WhereExpressionGraph], orderBy: [OrderByGraph], ids: [ID]): CompanyGraphConnection
+  employees(id: ID, ids: [ID], orderBy: [OrderByGraph], where: [WhereExpressionGraph], skip: Int, take: Int): [EmployeeGraph!]!
+  employeesByArgument(id: ID, ids: [ID], orderBy: [OrderByGraph], where: [WhereExpressionGraph], skip: Int, take: Int, content: String): [EmployeeGraph!]!
+  employeesConnection(after: String, first: Int, where: [WhereExpressionGraph], orderBy: [OrderByGraph], ids: [ID]): EmployeeGraphConnection
+  employeeSummary(where: [WhereExpressionGraph]): [EmployeeSummaryGraph]
+}
+
+scalar SByte
+
+scalar Seconds
+
+scalar Short
+
+enum StringComparison {
+  CURRENT_CULTURE
+  CURRENT_CULTURE_IGNORE_CASE
+  INVARIANT_CULTURE
+  INVARIANT_CULTURE_IGNORE_CASE
+  ORDINAL
+  ORDINAL_IGNORE_CASE
+}
+
+scalar UInt
+
+scalar ULong
+
+scalar UShort
+
+scalar Uri
+
+input WhereExpressionGraph {
+  path: String
+  comparison: ComparisonGraph
+  negate: Boolean
+  case: StringComparison
+  value: [String]
+  connector: Connector
+  groupedExpressions: [WhereExpressionGraph]
+}

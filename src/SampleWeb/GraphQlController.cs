@@ -1,8 +1,8 @@
 ﻿using System;
-using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using GraphQL;
+using GraphQL.NewtonsoftJson;
 using GraphQL.Types;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -26,64 +26,56 @@ public class GraphQlController :
     [HttpPost]
     public Task<ExecutionResult> Post(
         [BindRequired, FromBody] PostBody body,
-        [FromServices] MyDataContext dataContext,
         CancellationToken cancellation)
     {
-        return Execute(dataContext, body.Query, body.OperationName, body.Variables, cancellation);
+        return Execute(body.Query, body.OperationName, body.Variables, cancellation);
     }
 
     public class PostBody
     {
-        public string OperationName;
-        public string Query;
-        public JObject Variables;
+        public string? OperationName;
+        public string Query = null!;
+        public JObject? Variables;
     }
 
     [HttpGet]
     public Task<ExecutionResult> Get(
         [FromQuery] string query,
-        [FromQuery] string variables,
-        [FromQuery] string operationName,
-        [FromServices] MyDataContext dataContext,
+        [FromQuery] string? variables,
+        [FromQuery] string? operationName,
         CancellationToken cancellation)
     {
         var jObject = ParseVariables(variables);
-        return Execute(dataContext, query, operationName, jObject, cancellation);
+        return Execute(query, operationName, jObject, cancellation);
     }
 
-    async Task<ExecutionResult> Execute(
-        MyDataContext dataContext,
-        string query,
-        string operationName,
-        JObject variables,
+    async Task<ExecutionResult> Execute(string query,
+        string? operationName,
+        JObject? variables,
         CancellationToken cancellation)
     {
-        var executionOptions = new ExecutionOptions
+        var options = new ExecutionOptions
         {
             Schema = schema,
             Query = query,
             OperationName = operationName,
             Inputs = variables?.ToInputs(),
-            UserContext = dataContext,
             CancellationToken = cancellation,
 #if (DEBUG)
             ExposeExceptions = true,
             EnableMetrics = true,
 #endif
         };
+        var executeAsync = await executer.ExecuteAsync(options);
 
-        var result = await executer.ExecuteAsync(executionOptions)
-            .ConfigureAwait(false);
-
-        if (result.Errors?.Count > 0)
+        return new ExecutionResult
         {
-            Response.StatusCode = (int) HttpStatusCode.BadRequest;
-        }
-
-        return result;
+            Data = executeAsync.Data,
+            Errors = executeAsync.Errors
+        };
     }
 
-    static JObject ParseVariables(string variables)
+    static JObject? ParseVariables(string? variables)
     {
         if (variables == null)
         {

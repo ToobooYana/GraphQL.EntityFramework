@@ -1,11 +1,13 @@
-﻿using ApprovalTests;
+﻿using System.Threading.Tasks;
 using GraphQL.EntityFramework;
+using VerifyXunit;
 using Xunit;
 
+[UsesVerify]
 public class CompressTests
 {
     [Fact]
-    public void Simple()
+    public Task Simple()
     {
         var query = @"
 query ($id: String!)
@@ -15,6 +17,6 @@ query ($id: String!)
     id
   }
 }";
-        Approvals.Verify(Compress.Query(query));
+        return Verifier.Verify(Compress.Query(query));
     }
 }

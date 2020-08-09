@@ -1,12 +1,13 @@
-﻿using Microsoft.AspNetCore;
+﻿using System.Threading.Tasks;
+using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Hosting;
 
 public class Program
 {
-    public static void Main()
+    public static Task Main()
     {
         var webHostBuilder = WebHost.CreateDefaultBuilder();
         var hostBuilder = webHostBuilder.UseStartup<Startup>();
-        hostBuilder.Build().Run();
+        return hostBuilder.Build().RunAsync();
     }
 }

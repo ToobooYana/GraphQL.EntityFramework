@@ -1,64 +1,90 @@
-﻿using System.Linq;
+﻿using System.Collections.Generic;
+using System.Linq;
+using GraphQL;
 using GraphQL.EntityFramework;
 using GraphQL.Types;
 
 #region QueryUsedInController
 
 public class Query :
-    EfObjectGraphType
+    QueryGraphType<SampleDbContext>
 {
-    public Query(IEfGraphQLService efGraphQlService) :
+    public Query(IEfGraphQLService<SampleDbContext> efGraphQlService) :
         base(efGraphQlService)
     {
-        AddQueryField<CompanyGraph, Company>(
+        AddQueryField(
             name: "companies",
-            resolve: context =>
-            {
-                var dataContext = (MyDataContext) context.UserContext;
-                return dataContext.Companies;
-            });
+            resolve: context => context.DbContext.Companies);
 
         #endregion
-        AddSingleField<CompanyGraph, Company>(
-            name: "company",
-            resolve: context =>
-            {
-                var dataContext = (MyDataContext)context.UserContext;
-                return dataContext.Companies;
-            });
 
-        AddQueryConnectionField<CompanyGraph, Company>(
+        AddSingleField(
+            resolve: context => context.DbContext.Companies,
+            name: "company");
+
+        AddSingleField(
+            resolve: context => context.DbContext.Companies,
+            name: "companyOrNull",
+            nullable: true);
+
+        AddQueryConnectionField(
             name: "companiesConnection",
-            resolve: context =>
-            {
-                var dataContext = (MyDataContext) context.UserContext;
-                return dataContext.Companies;
-            });
+            resolve: context => context.DbContext.Companies);
 
-        AddQueryField<EmployeeGraph, Employee>(
+        AddQueryField(
             name: "employees",
-            resolve: context =>
-            {
-                var dataContext = (MyDataContext) context.UserContext;
-                return dataContext.Employees;
-            });
+            resolve: context => context.DbContext.Employees);
 
-        AddQueryField<EmployeeGraph, Employee>(
+        AddQueryField(
             name: "employeesByArgument",
-            arguments: new QueryArguments(new QueryArgument<StringGraphType> { Name = "content" }),
             resolve: context =>
             {
                 var content = context.GetArgument<string>("content");
-                var dataContext = (MyDataContext)context.UserContext;
-                return dataContext.Employees.Where(x => x.Content == content);
-            });
+                return context.DbContext.Employees.Where(x => x.Content == content);
+            },
+            arguments: new QueryArguments(
+                new QueryArgument<StringGraphType>
+                {
+                    Name = "content"
+                }));
 
-        AddQueryConnectionField<EmployeeGraph, Employee>(
+        AddQueryConnectionField(
             name: "employeesConnection",
+            resolve: context => context.DbContext.Employees);
+
+        #region ManuallyApplyWhere
+
+        Field<ListGraphType<EmployeeSummaryGraph>>(
+            name: "employeeSummary",
+            arguments: new QueryArguments(
+                new QueryArgument<ListGraphType<WhereExpressionGraph>>
+                {
+                    Name = "where"
+                }
+            ),
             resolve: context =>
             {
-                var dataContext = (MyDataContext) context.UserContext;
-                return dataContext.Employees;
+                var dbContext = ResolveDbContext(context);
+                IQueryable<Employee> query = dbContext.Employees;
+
+                if (context.HasArgument("where"))
+                {
+                    var wheres = context.GetArgument<List<WhereExpression>>("where");
+
+                    var predicate = ExpressionBuilder<Employee>.BuildPredicate(wheres);
+                    query = query.Where(predicate);
+                }
+
+                return from q in query
+                    group q by new {q.CompanyId}
+                    into g
+                    select new EmployeeSummary
+                    {
+                        CompanyId = g.Key.CompanyId,
+                        AverageAge = g.Average(x => x.Age),
+                    };
             });
+
+        #endregion
     }
 }

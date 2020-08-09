@@ -1,188 +1,399 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
-using GraphQL.EntityFramework;
-using Microsoft.EntityFrameworkCore;
+using System.Reflection;
+using System.Text.RegularExpressions;
 
-static class ExpressionBuilder<T>
+namespace GraphQL.EntityFramework
 {
-    public static Expression<Func<T, bool>> BuildPredicate(WhereExpression where)
+    public static class ExpressionBuilder<T>
     {
-        return BuildPredicate(where.Path, where.Comparison.GetValueOrDefault(), where.Value, where.Case);
-    }
+        const string LIST_PROPERTY_PATTERN = @"\[(.*)\]";
 
-    public static Expression<Func<T, object>> BuildPropertyExpression(string path)
-    {
-        var propertyFunc = PropertyAccessorBuilder<T>.GetPropertyFunc(path);
-        var propAsObject = Expression.Convert(propertyFunc.Left, typeof(object));
+        #region Conditional List
 
-        return Expression.Lambda<Func<T, object>>(propAsObject, propertyFunc.SourceParameter);
-    }
-
-    public static Expression<Func<T, bool>> BuildPredicate(string path, Comparison comparison, string[] values, StringComparison? stringComparison = null)
-    {
-        var propertyFunc = PropertyAccessorBuilder<T>.GetPropertyFunc(path);
-
-        if (propertyFunc.Type == typeof(string))
+        /// <summary>
+        /// Build a predicate for a supplied list of where's (Grouped or not)
+        /// </summary>
+        public static Expression<Func<T, bool>> BuildPredicate(IEnumerable<WhereExpression> wheres)
         {
-            WhereValidator.ValidateString(comparison, stringComparison);
-            switch (comparison)
+            var expressionBody = MakePredicateBody(wheres);
+            var param = PropertyCache<T>.SourceParameter;
+
+            return Expression.Lambda<Func<T, bool>>(expressionBody, param);
+        }
+
+        /// <summary>
+        /// Makes the predicate body from the supplied parameter and list of where expressions
+        /// </summary>
+        private static Expression MakePredicateBody(IEnumerable<WhereExpression> wheres)
+        {
+            Expression? mainExpression = null;
+            var previousWhere = new WhereExpression();
+
+            // Iterate over wheres
+            foreach (var where in wheres)
             {
-                case Comparison.In:
-                    return BuildStringIn(values, propertyFunc, stringComparison);
+                Expression nextExpression;
 
-                case Comparison.NotIn:
-                    return BuildStringIn(values, propertyFunc, stringComparison, true);
+                // If there are grouped expressions
+                if (@where.GroupedExpressions?.Length > 0)
+                {
+                    // Recurse with new set of expression
+                    nextExpression = MakePredicateBody(where.GroupedExpressions);
 
-                default:
-                    var value = values?.Single();
-                    return BuildStringCompare(comparison, value, propertyFunc, stringComparison);
+                    // If the whole group is to be negated
+                    if (where.Negate)
+                    {
+                        // Negate it
+                        nextExpression = NegateExpression(nextExpression);
+                    }
+                }
+                // Otherwise handle single expressions
+                else
+                {
+                    // Get the predicate body for the single expression
+                    nextExpression = MakePredicateBody(where.Path, where.Comparison, where.Value, where.Negate, where.Case);
+                }
+
+                // If this is the first where processed
+                if (mainExpression == null)
+                {
+                    // Assign to main expression
+                    mainExpression = nextExpression;
+                }
+                else
+                {
+                    // Otherwise combine expression by specified connector or default (AND) if not provided
+                    mainExpression = CombineExpressions(previousWhere.Connector, mainExpression, nextExpression);
+                }
+
+                // Save the previous where so the connector can be retrieved
+                previousWhere = where;
             }
+
+            return mainExpression ?? Expression.Constant(false);
         }
-        else
+
+        #endregion
+
+        #region Conditional Single
+
+        /// <summary>
+        /// Create a single predicate for the single set of supplied conditional arguments
+        /// </summary>
+        public static Expression<Func<T, bool>> BuildPredicate(string path, Comparison comparison, string?[]? values)
         {
-            WhereValidator.ValidateObject(propertyFunc.Type, comparison, stringComparison);
-            switch (comparison)
+            return BuildPredicate(path, comparison, values, null);
+        }
+
+        /// <summary>
+        /// Create a single predicate for the single set of supplied conditional arguments
+        /// </summary>
+        public static Expression<Func<T, bool>> BuildPredicate(string path, Comparison comparison, string?[]? values, StringComparison? stringComparison)
+        {
+            return BuildPredicate(path, comparison, values, false, stringComparison);
+        }
+
+        /// <summary>
+        /// Create a single predicate for the single set of supplied conditional arguments
+        /// </summary>
+        public static Expression<Func<T, bool>> BuildPredicate(string path, Comparison comparison, string?[]? values, bool negate)
+        {
+            return BuildPredicate(path, comparison, values, negate, null);
+        }
+
+        /// <summary>
+        /// Create a single predicate for the single set of supplied conditional arguments
+        /// </summary>
+        public static Expression<Func<T, bool>> BuildPredicate(string path, Comparison comparison, string?[]? values, bool negate, StringComparison? stringComparison)
+        {
+            var expressionBody = MakePredicateBody(path, comparison, values, negate, stringComparison);
+            var param = PropertyCache<T>.SourceParameter;
+
+            return Expression.Lambda<Func<T, bool>>(expressionBody, param);
+        }
+
+        /// <summary>
+        /// Makes the predicate body from the single set of supplied conditional arguments
+        /// </summary>
+        static Expression MakePredicateBody(string path, Comparison comparison, string?[]? values, bool negate = false, StringComparison? stringComparison = null)
+        {
+            Expression expressionBody;
+
+            // If path includes list property access
+            if (HasListInPath(path))
             {
-                case Comparison.In:
-                    return BuildObjectIn(values, propertyFunc);
-
-                case Comparison.NotIn:
-                    return BuildObjectIn(values, propertyFunc, true);
-
-                default:
-                    var value = values?.Single();
-                    return BuildObjectCompare(comparison, value, propertyFunc);
+                // Handle a list path
+                expressionBody = ProcessList(path, comparison, values!, stringComparison);
             }
+            // Otherwise linear property access
+            else
+            {
+                // Just get expression
+                expressionBody = GetExpression(path, comparison, values, stringComparison);
+            }
+
+            // If the expression should be negated
+            if (negate)
+            {
+                // Not it
+                expressionBody = NegateExpression(expressionBody);
+            }
+
+            return expressionBody;
         }
-    }
 
-    public static Expression<Func<T, bool>> BuildSinglePredicate(string path, Comparison comparison, string value, StringComparison? stringComparison = null)
-    {
-        var propertyFunc = PropertyAccessorBuilder<T>.GetPropertyFunc(path);
+        #endregion
 
-        if (propertyFunc.Type == typeof(string))
+        #region Body Builders (Lol)
+
+        /// <summary>
+        /// Process a list based item inside the property path
+        /// </summary>
+        static Expression ProcessList(string path, Comparison comparison, string?[]? values, StringComparison? stringComparison = null)
         {
-            WhereValidator.ValidateSingleString(comparison, stringComparison);
-            return BuildStringCompare(comparison, value, propertyFunc, stringComparison);
+            // Get the path pertaining to individual list items
+            var listPath = Regex.Match(path, LIST_PROPERTY_PATTERN).Groups[1].Value;
+            // Remove the part of the path that leads into list item properties
+            path = Regex.Replace(path, LIST_PROPERTY_PATTERN, "");
+
+            // Get the property on the current object up to the list member
+            var property = PropertyCache<T>.GetProperty(path);
+
+            // Get the list item type details
+            var listItemType = property.PropertyType.GetGenericArguments().Single();
+
+            // Generate the predicate for the list item type
+            var subPredicate = typeof(ExpressionBuilder<>)
+                .MakeGenericType(listItemType)
+                .GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .Single(m => m.Name.Equals("BuildPredicate") && m.GetParameters().Length == 5)
+                .Invoke(new object(), new object[] { listPath, comparison, values!, false, stringComparison! }) as Expression;
+
+            // Generate a method info for the Any Enumerable Static Method
+            var anyInfo = typeof(Enumerable)
+                        .GetMethods(BindingFlags.Static | BindingFlags.Public)
+                        .First(m => m.Name == "Any" && m.GetParameters().Length == 2)
+                        .MakeGenericMethod(listItemType);
+
+            // Create Any Expression Call
+            return Expression.Call(anyInfo, property.Left, subPredicate);
         }
 
-        WhereValidator.ValidateSingleObject(propertyFunc.Type, comparison, stringComparison);
-        return BuildObjectCompare(comparison, value, propertyFunc);
-    }
-
-    static Expression<Func<T, bool>> BuildStringCompare(Comparison comparison, string value, PropertyAccessor propertyAccessor, StringComparison? stringComparison)
-    {
-        var body = MakeStringComparison(propertyAccessor.Left, comparison, value, stringComparison);
-        return Expression.Lambda<Func<T, bool>>(body, propertyAccessor.SourceParameter);
-    }
-
-    static Expression<Func<T, bool>> BuildObjectCompare(Comparison comparison, string expressionValue, PropertyAccessor propertyAccessor)
-    {
-        var valueObject = TypeConverter.ConvertStringToType(expressionValue, propertyAccessor.Type);
-        var body = MakeObjectComparison(propertyAccessor.Left, comparison, valueObject);
-        return Expression.Lambda<Func<T, bool>>(body, propertyAccessor.SourceParameter);
-    }
-
-    static Expression<Func<T, bool>> BuildObjectIn(string[] values, PropertyAccessor propertyAccessor, bool not = false)
-    {
-        var objects = TypeConverter.ConvertStringsToList(values, propertyAccessor.Type);
-        var constant = Expression.Constant(objects);
-        var inInfo = objects.GetType().GetMethod("Contains", new[] {propertyAccessor.Type});
-        var body = Expression.Call(constant, inInfo, propertyAccessor.Left);
-        return Expression.Lambda<Func<T, bool>>(not ? Expression.Not(body) : (Expression)body, propertyAccessor.SourceParameter);
-    }
-
-    static Expression<Func<T, bool>> BuildStringIn(string[] array, PropertyAccessor propertyAccessor, StringComparison? stringComparison, bool not = false)
-    {
-        var itemValue = Expression.Parameter(typeof(string));
-        MethodCallExpression equalsBody;
-        if (stringComparison == null)
+        /// <summary>
+        /// Build an expression from provided where parameters
+        /// </summary>
+        static Expression GetExpression(string path, Comparison comparison, string?[]? values, StringComparison? stringComparison = null)
         {
-            equalsBody = Expression.Call(null, StringMethodCache.Equal, itemValue, propertyAccessor.Left);
+            var property = PropertyCache<T>.GetProperty(path);
+            Expression expressionBody;
+
+            if (property.PropertyType == typeof(string))
+            {
+                switch (comparison)
+                {
+                    case Comparison.NotIn:
+                        WhereValidator.ValidateString(comparison, stringComparison);
+                        expressionBody = NegateExpression(MakeStringIn(values!, property, stringComparison));  // Ensure expression is negated
+                        break;
+                    case Comparison.In:
+                        WhereValidator.ValidateString(comparison, stringComparison);
+                        expressionBody = MakeStringIn(values!, property, stringComparison);
+                        break;
+
+                    default:
+                        WhereValidator.ValidateSingleString(comparison, stringComparison);
+                        var value = values?.Single();
+                        expressionBody = MakeStringComparison(comparison, value, property, stringComparison);
+                        break;
+                }
+            }
+            else
+            {
+                switch (comparison)
+                {
+                    case Comparison.NotIn:
+                        WhereValidator.ValidateObject(property.PropertyType, comparison, stringComparison);
+                        expressionBody = NegateExpression(MakeObjectIn(values!, property)); // Ensure expression is negated
+                        break;
+                    case Comparison.In:
+                        WhereValidator.ValidateObject(property.PropertyType, comparison, stringComparison);
+                        expressionBody = MakeObjectIn(values!, property);
+                        break;
+
+                    default:
+                        WhereValidator.ValidateSingleObject(property.PropertyType, comparison, null);
+                        var value = values?.Single();
+                        var valueObject = TypeConverter.ConvertStringToType(value, property.PropertyType);
+                        expressionBody = MakeObjectComparison(comparison, valueObject, property);
+                        break;
+                }
+            }
+
+            return expressionBody;
         }
-        else
-        {
-            equalsBody = Expression.Call(null, StringMethodCache.EqualComparison, itemValue, propertyAccessor.Left, Expression.Constant(stringComparison));
-        }
-        var itemEvaluate = Expression.Lambda<Func<string, bool>>(equalsBody, itemValue);
-        var anyBody = Expression.Call(null, StringMethodCache.Any, Expression.Constant(array), itemEvaluate);
-        return Expression.Lambda<Func<T, bool>>(not ? Expression.Not(anyBody) : (Expression)anyBody, propertyAccessor.SourceParameter);
-    }
 
-    static Expression MakeStringComparison(Expression left, Comparison comparison, string value, StringComparison? stringComparison)
-    {
-        var valueConstant = Expression.Constant(value, typeof(string));
-        var nullCheck = Expression.NotEqual(left, Expression.Constant(null, typeof(object)));
-        if (stringComparison == null)
+        #endregion
+
+        #region Operations
+
+        /// <summary>
+        /// Make Object List In Comparision
+        /// </summary>
+        static Expression MakeObjectIn(string[] values, Property<T> property)
         {
+            // Attempt to convert the string values to the object type
+            var objects = TypeConverter.ConvertStringsToList(values, property.PropertyType);
+            // Make the object values a constant expression
+            var constant = Expression.Constant(objects);
+            // Build and return the expression body
+            return Expression.Call(constant, property.ListContainsMethod, property.Left);
+        }
+
+        /// <summary>
+        /// Make String List In Comparison
+        /// </summary>
+        static Expression MakeStringIn(string[] values, Property<T> property, StringComparison? comparison)
+        {
+            MethodCallExpression equalsBody;
+
+            // If string comparison not provided
+            if (comparison == null)
+            {
+                // Do basic string compare
+                equalsBody = Expression.Call(null, ReflectionCache.StringEqual, ExpressionCache.StringParam, property.Left);
+            }
+            // Otherwise
+            else
+            {
+                // String comparison with comparison type value
+                equalsBody = Expression.Call(null, ReflectionCache.StringEqualComparison, ExpressionCache.StringParam, property.Left, Expression.Constant(comparison));
+            }
+
+            // Make lambda for comparing each string value against property value
+            var itemEvaluate = Expression.Lambda<Func<string, bool>>(equalsBody, ExpressionCache.StringParam);
+
+            // Build Expression body to check if any string values match the property value
+            return Expression.Call(null, ReflectionCache.StringAny, Expression.Constant(values), itemEvaluate);
+        }
+
+        /// <summary>
+        /// Make String based single value comparisons
+        /// </summary>
+        static Expression MakeStringComparison(Comparison comparison, string? value, Property<T> property, StringComparison? stringComparison)
+        {
+            var left = property.Left;
+
+            var valueConstant = Expression.Constant(value, typeof(string));
+            var nullCheck = Expression.NotEqual(left, ExpressionCache.Null);
+
+            if (stringComparison == null)
+            {
+                switch (comparison)
+                {
+                    case Comparison.Equal:
+                        return Expression.Call(ReflectionCache.StringEqual, left, valueConstant);
+                    case Comparison.Like:
+                        return Expression.Call(null, ReflectionCache.StringLike, ExpressionCache.EfFunction, left, valueConstant);
+                    case Comparison.StartsWith:
+                        var startsWithExpression = Expression.Call(left, ReflectionCache.StringStartsWith, valueConstant);
+                        return Expression.AndAlso(nullCheck, startsWithExpression);
+                    case Comparison.EndsWith:
+                        var endsWithExpression = Expression.Call(left, ReflectionCache.StringEndsWith, valueConstant);
+                        return Expression.AndAlso(nullCheck, endsWithExpression);
+                    case Comparison.Contains:
+                        var indexOfExpression = Expression.Call(left, ReflectionCache.StringIndexOf, valueConstant);
+                        var notEqualExpression = Expression.NotEqual(indexOfExpression, ExpressionCache.NegativeOne);
+                        return Expression.AndAlso(nullCheck, notEqualExpression);
+                }
+            }
+            else
+            {
+                var comparisonConstant = Expression.Constant(stringComparison, typeof(StringComparison));
+                switch (comparison)
+                {
+                    case Comparison.Equal:
+                        return Expression.Call(ReflectionCache.StringEqualComparison, left, valueConstant, comparisonConstant);
+                    case Comparison.StartsWith:
+                        var startsWithExpression = Expression.Call(left, ReflectionCache.StringStartsWithComparison, valueConstant, comparisonConstant);
+                        return Expression.AndAlso(nullCheck, startsWithExpression);
+                    case Comparison.EndsWith:
+                        var endsWithExpression = Expression.Call(left, ReflectionCache.StringEndsWithComparison, valueConstant, comparisonConstant);
+                        return Expression.AndAlso(nullCheck, endsWithExpression);
+                    case Comparison.Contains:
+                        var indexOfExpression = Expression.Call(left, ReflectionCache.StringIndexOfComparison, valueConstant, comparisonConstant);
+                        var notEqualExpression = Expression.NotEqual(indexOfExpression, ExpressionCache.NegativeOne);
+                        return Expression.AndAlso(nullCheck, notEqualExpression);
+                }
+
+            }
+
+            throw new NotSupportedException($"Invalid comparison operator '{comparison}'.");
+        }
+
+        /// <summary>
+        /// Make Object based single value comparisons
+        /// </summary>
+        static Expression MakeObjectComparison(Comparison comparison, object? value, Property<T> property)
+        {
+            var left = property.Left;
+            var constant = Expression.Constant(value, left.Type);
+
             switch (comparison)
             {
                 case Comparison.Equal:
-                    return Expression.Call(StringMethodCache.Equal, left, valueConstant);
-                case Comparison.Like:
-                    return Expression.Call(null, StringMethodCache.Like, Expression.Constant(EF.Functions), left, valueConstant);
-                case Comparison.NotEqual:
-                    var notEqualsCall = Expression.Call(StringMethodCache.Equal, left, valueConstant);
-                    return Expression.Not(notEqualsCall);
-                case Comparison.StartsWith:
-                    var startsWithExpression = Expression.Call(left, StringMethodCache.StartsWith, valueConstant);
-                    return Expression.AndAlso(nullCheck, startsWithExpression);
-                case Comparison.EndsWith:
-                    var endsWithExpression = Expression.Call(left, StringMethodCache.EndsWith, valueConstant);
-                    return Expression.AndAlso(nullCheck, endsWithExpression);
-                case Comparison.Contains:
-                    var indexOfExpression = Expression.Call(left, StringMethodCache.IndexOf, valueConstant);
-                    var notEqualExpression = Expression.NotEqual(indexOfExpression, Expression.Constant(-1));
-                    return Expression.AndAlso(nullCheck, notEqualExpression);
+                    return Expression.MakeBinary(ExpressionType.Equal, left, constant);
+                case Comparison.GreaterThan:
+                    return Expression.MakeBinary(ExpressionType.GreaterThan, left, constant);
+                case Comparison.GreaterThanOrEqual:
+                    return Expression.MakeBinary(ExpressionType.GreaterThanOrEqual, left, constant);
+                case Comparison.LessThan:
+                    return Expression.MakeBinary(ExpressionType.LessThan, left, constant);
+                case Comparison.LessThanOrEqual:
+                    return Expression.MakeBinary(ExpressionType.LessThanOrEqual, left, constant);
             }
+
+            throw new NotSupportedException($"Invalid comparison operator '{comparison}'.");
         }
-        else
+
+        #endregion
+
+        #region Helpers
+
+        /// <summary>
+        /// Checks the path for matching list property marker
+        /// </summary>
+        private static bool HasListInPath(string path)
         {
-            var comparisonConstant = Expression.Constant(stringComparison, typeof(StringComparison));
-            switch (comparison)
+            return Regex.IsMatch(path, LIST_PROPERTY_PATTERN);
+        }
+
+        /// <summary>
+        /// Combine expressions by a specified binary operator
+        /// </summary>
+        static Expression CombineExpressions(Connector connector, Expression expr1, Expression expr2)
+        {
+            switch (connector)
             {
-                case Comparison.Equal:
-                    return Expression.Call(StringMethodCache.EqualComparison, left, valueConstant, comparisonConstant);
-                case Comparison.NotEqual:
-                    var notEqualsCall = Expression.Call(StringMethodCache.EqualComparison, left, valueConstant, comparisonConstant);
-                    return Expression.Not(notEqualsCall);
-                case Comparison.StartsWith:
-                    var startsWithExpression = Expression.Call(left, StringMethodCache.StartsWithComparison, valueConstant, comparisonConstant);
-                    return Expression.AndAlso(nullCheck, startsWithExpression);
-                case Comparison.EndsWith:
-                    var endsWithExpression = Expression.Call(left, StringMethodCache.EndsWithComparison, valueConstant, comparisonConstant);
-                    return Expression.AndAlso(nullCheck, endsWithExpression);
-                case Comparison.Contains:
-                    var indexOfExpression = Expression.Call(left, StringMethodCache.IndexOfComparison, valueConstant, comparisonConstant);
-                    var notEqualExpression = Expression.NotEqual(indexOfExpression, Expression.Constant(-1));
-                    return Expression.AndAlso(nullCheck, notEqualExpression);
+                case Connector.And:
+                    return Expression.AndAlso(expr1, expr2);
+                case Connector.Or:
+                    return Expression.OrElse(expr1, expr2);
             }
 
+            throw new NotSupportedException($"Invalid connector operator '{connector}'.");
         }
 
-        throw new NotSupportedException($"Invalid comparison operator '{comparison}'.");
-    }
-
-    static Expression MakeObjectComparison(Expression left, Comparison comparison, object value)
-    {
-        var constant = Expression.Constant(value, left.Type);
-        switch (comparison)
+        /// <summary>
+        /// Negates a supplied expression
+        /// </summary>
+        static Expression NegateExpression(Expression expression)
         {
-            case Comparison.Equal:
-                return Expression.MakeBinary(ExpressionType.Equal, left, constant);
-            case Comparison.NotEqual:
-                return Expression.MakeBinary(ExpressionType.NotEqual, left, constant);
-            case Comparison.GreaterThan:
-                return Expression.MakeBinary(ExpressionType.GreaterThan, left, constant);
-            case Comparison.GreaterThanOrEqual:
-                return Expression.MakeBinary(ExpressionType.GreaterThanOrEqual, left, constant);
-            case Comparison.LessThan:
-                return Expression.MakeBinary(ExpressionType.LessThan, left, constant);
-            case Comparison.LessThanOrEqual:
-                return Expression.MakeBinary(ExpressionType.LessThanOrEqual, left, constant);
+            return Expression.Not(expression);
         }
 
-        throw new NotSupportedException($"Invalid comparison operator '{comparison}'.");
+        #endregion
     }
 }

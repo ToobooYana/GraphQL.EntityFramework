@@ -1,19 +1,15 @@
 ﻿using GraphQL.EntityFramework;
 
 public class FilterParentGraph :
-    EfObjectGraphType<FilterParentEntity>
+    EfObjectGraphType<IntegrationDbContext, FilterParentEntity>
 {
-    public FilterParentGraph(IEfGraphQLService graphQlService) :
+    public FilterParentGraph(IEfGraphQLService<IntegrationDbContext> graphQlService) :
         base(graphQlService)
     {
-        Field(x => x.Id);
-        Field(x => x.Property);
-        AddNavigationField<FilterChildGraph, FilterChildEntity>(
-            name: "children",
-            resolve: context => context.Source.Children);
-        AddNavigationConnectionField<FilterChildGraph, FilterChildEntity>(
+        AddNavigationConnectionField(
             name: "childrenConnection",
             resolve: context => context.Source.Children,
             includeNames: new[] {"Children"});
+        AutoMap();
     }
 }

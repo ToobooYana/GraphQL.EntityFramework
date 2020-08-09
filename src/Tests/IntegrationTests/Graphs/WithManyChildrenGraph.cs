@@ -2,20 +2,20 @@
 using Xunit;
 
 public class WithManyChildrenGraph :
-    EfObjectGraphType<WithManyChildrenEntity>
+    EfObjectGraphType<IntegrationDbContext, WithManyChildrenEntity>
 {
-    public WithManyChildrenGraph(IEfGraphQLService graphQlService) :
+    public WithManyChildrenGraph(IEfGraphQLService<IntegrationDbContext> graphQlService) :
         base(graphQlService)
     {
-        Field(x => x.Id);
-        AddNavigationField<Child1Graph, Child1Entity>(
+        AddNavigationField(
             name: "child1",
-            includeNames: new []{ "Child2", "Child1" },
             resolve: context =>
             {
                 Assert.NotNull(context.Source.Child2);
                 Assert.NotNull(context.Source.Child1);
                 return context.Source.Child1;
-            });
+            },
+            includeNames: new []{ "Child2", "Child1" });
+        AutoMap();
     }
 }

@@ -2,7 +2,7 @@
 
 public class FilterChildEntity
 {
-    public Guid Id { get; set; }
-    public string Property { get; set; }
-    public FilterParentEntity Parent { get; set; }
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string? Property { get; set; }
+    public FilterParentEntity? Parent { get; set; }
 }
